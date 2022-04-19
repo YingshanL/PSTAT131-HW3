@@ -1,0 +1,259 @@
+---
+title: "Homework 3"
+author: "Yingshan Li (7937790)"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(dplyr)
+library(magrittr)
+library(tidymodels)
+library(tidyverse)
+library(corrr)
+library(discrim)
+library(poissonreg)
+library(corrr)
+library(klaR)
+```
+
+Load the data
+```{r}
+titanic <- read.csv(file = "titanic.csv" )
+titanic1 <- titanic %>% mutate(survived = factor(survived, levels = c("Yes", "No"))) %>% 
+  mutate(pclass = factor(pclass))
+```
+
+Question 1
+```{r}
+set.seed(2231)
+
+
+titanic_split <- initial_split(titanic1, prop = 0.80, strata = survived)
+titanic_train <- training(titanic_split)
+titanic_test <- testing(titanic_split)
+nrow(titanic_train)
+nrow(titanic_test)
+nrow(titanic1)
+712/891 
+179/891
+```
+There are approximately 80% of the observations in the training data set and 20% of the observations in the test data set, which correspond to the proportion we indicate in the initial_split() function. 
+
+check for missing data
+```{r}
+table(is.na(titanic_train))
+
+```
+There are missing data in the data set, and most missing data are cabin and age. 
+
+Stratified sampling for this data make sure the distribution of survived or not survived is the same in both training and test data set. 
+
+Question 2
+```{r}
+titanic_train %>% 
+  ggplot(aes(x = survived)) +
+  geom_bar()
+```
+
+The number of not survived is obviously more than the number of survived, approximately a 40% - 60% split between Yes or No. Such difference is not significant to cause the problem of imbalance for our further analysis. 
+
+Question 3
+```{r}
+cor_titanic <- titanic_train %>% 
+  dplyr::select(age, sib_sp, parch, fare) %>% 
+  correlate()
+cor_titanic
+rplot(cor_titanic)
+```
+
+
+```{r}
+cor_titanic %>% 
+  stretch() %>% 
+  ggplot(aes(x, y, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = as.character(fashion(r))))
+```
+
+From the plot, we can observe that the sib_sp and age are negatively correlated, sib_sp and parch are positively correlated. 
+
+Question 4 
+Create a recipe
+```{r}
+titanic_recipe <- recipe(survived ~ pclass + sex + age + sib_sp + parch + fare, data = titanic_train) %>%
+  step_impute_linear(age) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(~ starts_with("sex"):fare + age:fare)
+
+```
+
+Question 5
+```{r}
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+```
+
+
+```{r}
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+  add_recipe(titanic_recipe)
+
+log_fit <- fit(log_wkflow, titanic_train)
+```
+
+
+```{r}
+log_fit %>% 
+  tidy()
+```
+
+Question 6
+LDA
+```{r}
+lda_mod <- discrim_linear() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+```
+
+```{r}
+lda_wkflow <- workflow() %>% 
+  add_model(lda_mod) %>% 
+  add_recipe(titanic_recipe)
+
+lda_fit <- fit(lda_wkflow, titanic_train)
+```
+
+
+Question 7
+QDA
+```{r}
+qda_mod <- discrim_quad() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+```
+
+```{r}
+qda_wkflow <- workflow() %>% 
+  add_model(qda_mod) %>% 
+  add_recipe(titanic_recipe)
+
+qda_fit <- fit(qda_wkflow, titanic_train)
+```
+
+
+Question 8
+naive Bayes model
+```{r}
+nb_mod <- naive_Bayes() %>% 
+  set_mode("classification") %>% 
+  set_engine("klaR") %>% 
+  set_args(usekerneol = FALSE)
+```
+
+```{r, warning=FALSE}
+nb_wkflow <- workflow() %>% 
+  add_model(nb_mod) %>% 
+  add_recipe(titanic_recipe)
+
+nb_fit <- fit(nb_wkflow, titanic_train)
+
+```
+
+Question 9
+
+```{r}
+log_predict <- predict(log_fit, new_data = titanic_train, type = "prob")
+```
+
+```{r}
+lda_predict <- predict(lda_fit, new_data = titanic_train, type = "prob")
+```
+
+
+
+```{r}
+qda_predict <- predict(qda_fit, new_data = titanic_train, type = "prob")
+```
+
+
+```{r, warning=FALSE}
+nb_predict <- predict(nb_fit, new_data = titanic_train, type = "prob")
+```
+
+```{r}
+titanic_train_predict <- bind_cols(log_predict, lda_predict, qda_predict, nb_predict)
+titanic_train_predict
+```
+
+
+```{r}
+log_reg_acc <- augment(log_fit, new_data = titanic_train) %>% 
+  accuracy(truth = survived, estimate = .pred_class)
+log_reg_acc
+```
+```{r}
+lda_acc <- augment(lda_fit, new_data = titanic_train) %>% 
+  accuracy(truth = survived, estimate = .pred_class)
+lda_acc
+```
+```{r}
+qda_acc <- augment(qda_fit, new_data = titanic_train) %>% 
+  accuracy(truth = survived, estimate = .pred_class)
+qda_acc
+```
+
+```{r, warning=FALSE}
+nb_acc <- augment(nb_fit, new_data = titanic_train) %>% 
+  accuracy(truth = survived, estimate = .pred_class)
+nb_acc
+```
+
+```{r}
+accuracies <- c(log_reg_acc$.estimate, lda_acc$.estimate, 
+                nb_acc$.estimate, qda_acc$.estimate)
+models <- c("Logistic Regression", "LDA", "Naive Bayes", "QDA")
+results <- tibble(accuracies = accuracies, models = models)
+results %>% 
+  arrange(-accuracies)
+```
+Logistic Regression achieved the highest accuracy on the training data.
+
+Question 10
+```{r}
+predict(log_fit, new_data = titanic_test, type = "prob")
+```
+
+```{r}
+augment(log_fit, new_data = titanic_test) %>% 
+  conf_mat(truth = survived, estimate = .pred_class) %>% 
+  autoplot(type = "heatmap")
+
+```
+
+
+
+```{r}
+
+augment(log_fit, new_data = titanic_test) %>%
+  roc_curve(survived, .pred_Yes) %>%
+  autoplot()
+```
+
+```{r}
+augment(log_fit, new_data = titanic_test) %>%
+  roc_auc(survived, .pred_Yes)
+```
+
+```{r}
+augment(log_fit, new_data = titanic_test) %>% 
+  accuracy(truth = survived, estimate = .pred_class)
+```
+
+The accuracy pf the model on the testing data is approximately 86.59%, so thw model generally fits well on the tests data. The model performs well because the accuracy for training and testing data both exceed 80%. The accuracy rates are different for the two data sets, and the accuracy for testing data is slightly higher than  the training accuracy, which might be due to the smaller sample size in the testing data. 
